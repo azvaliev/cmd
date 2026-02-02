@@ -5,6 +5,6 @@ tasks:
     env:
       DEBUG: true
     cmds:
-      - go run {{.CLI_ARGS}} ./*.go
+      - go run {{.CLI_ARGS}} ./cmd/cmd/*.go
     interactive: true
-  fmt: go fmt
+  fmt: go fmt ./...

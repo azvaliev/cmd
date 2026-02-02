@@ -1,4 +1,4 @@
-package main
+package ai
 
 import (
 	"errors"
@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/azvaliev/cmd/internal/pkg/env"
 )
 
 type ModelConfig struct {
@@ -188,7 +190,7 @@ func CreateLLamaServer(modelConfig ModelConfig) (*LlamaServer, error) {
 		args...,
 	)
 
-	if DEBUG {
+	if env.DEBUG {
 		// share stdout, stderr
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

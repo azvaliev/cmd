@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+
+	"github.com/azvaliev/cmd/internal/pkg/ai"
 )
 
 func main() {
-	server, err := CreateLLamaServer(QWEN_25_CODER_MODEL_CONFIG)
+	server, err := ai.CreateLLamaServer(ai.QWEN_25_CODER_MODEL_CONFIG)
 	if err != nil {
 		fmt.Println(err)
 		return
