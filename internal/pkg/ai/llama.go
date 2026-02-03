@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -166,7 +167,7 @@ func CreateLLamaServer(modelConfig ModelConfig) (*LlamaServer, error) {
 		"--ctx-size",
 		"4096",
 		// full offload to GPU
-		"--n-gpu-layers",
+		"-ngl",
 		"999",
 		"--batch-size",
 		"2048",
@@ -224,10 +225,13 @@ func CreateLLamaServer(modelConfig ModelConfig) (*LlamaServer, error) {
 		)
 	}
 
+	var cmdOutput bytes.Buffer
 	cmd := exec.Command(
 		"llama-server",
 		args...,
 	)
+	cmd.Stdout = &cmdOutput
+	cmd.Stderr = &cmdOutput
 
 	// if env.DEBUG {
 	// 	// share stdout, stderr
@@ -264,19 +268,13 @@ func CreateLLamaServer(modelConfig ModelConfig) (*LlamaServer, error) {
 		}
 	}
 
+	llamaServer.Dispose()
+
 	// if debug mode and failed, log all output
 	if env.DEBUG {
-		out, err := cmd.Output()
-		fmt.Println(string(out))
-
-		if exitErr, isExitError := err.(*exec.ExitError); isExitError {
-			fmt.Printf("Llama server exited with error: %s\n", exitErr.Stderr)
-		} else {
-			fmt.Printf("Llama server exited with error: %s\n", err)
-		}
+		fmt.Println(cmdOutput.String())
 	}
 
-	llamaServer.Dispose()
 	return nil, errors.Join(errors.New("llama-server failed to start"), healthcheckError)
 }
 
