@@ -1,19 +1,28 @@
 package ai
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
 	"syscall"
 	"time"
 
 	"github.com/azvaliev/cmd/internal/pkg/env"
+	"github.com/firebase/genkit/go/ai"
+	"github.com/firebase/genkit/go/core/api"
+	"github.com/firebase/genkit/go/plugins/compat_oai"
 )
 
+const PROVIDER_NAME string = "llama.cpp"
+
+// We have a singleton model
+const MODEL_NAME string = "default"
+
 type ModelConfig struct {
+	Name      string
 	ModelPath string
 	// -1 for unlimited
 	ReasoningBudget int
@@ -31,6 +40,7 @@ type ModelConfig struct {
 //
 // https://huggingface.co/Qwen/Qwen3-1.7B
 var QWEN_3_MODEL_CONFIG ModelConfig = ModelConfig{
+	Name:            "Qwen3-1.7B",
 	ModelPath:       "/Users/azatvaliev/.lmstudio/models/unsloth/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q8_0.gguf",
 	ReasoningBudget: 0,
 	Temperature:     0.7,
@@ -43,7 +53,8 @@ var QWEN_3_MODEL_CONFIG ModelConfig = ModelConfig{
 // LFM 2.5 1.2B Instruct
 //
 // https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct
-var LFM_25_INSTRUCT_MODEL_CONFIG ModelConfig = ModelConfig{
+var LIQUIDAI_LFM_25_INSTRUCT_MODEL_CONFIG ModelConfig = ModelConfig{
+	Name:            "LFM2.5-1.2B-Instruct",
 	ModelPath:       "/Users/azatvaliev/.lmstudio/models/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/LFM2.5-1.2B-Instruct-Q8_0.gguf",
 	ReasoningBudget: 0,
 	Temperature:     0.1,
@@ -56,6 +67,7 @@ var LFM_25_INSTRUCT_MODEL_CONFIG ModelConfig = ModelConfig{
 //
 // https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct
 var QWEN_25_CODER_MODEL_CONFIG ModelConfig = ModelConfig{
+	Name:            "Qwen2.5-Coder-1.5B-Instruct",
 	ModelPath:       "/Users/azatvaliev/.lmstudio/models/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/qwen2.5-coder-1.5b-instruct-q8_0.gguf",
 	ReasoningBudget: 0,
 	Temperature:     0.7,
@@ -69,6 +81,7 @@ var QWEN_25_CODER_MODEL_CONFIG ModelConfig = ModelConfig{
 //
 // https://huggingface.co/ibm-granite/granite-4.0-h-1b
 var IBM_GRANITE_MODEL_CONFIG ModelConfig = ModelConfig{
+	Name:            "IBM-Granite-4.0-H-1b",
 	ModelPath:       "/Users/azatvaliev/.lmstudio/models/ibm-granite/granite-4.0-h-1b-GGUF/granite-4.0-h-1b-Q8_0.gguf",
 	ReasoningBudget: 0,
 	Temperature:     0.0,
@@ -78,9 +91,35 @@ var IBM_GRANITE_MODEL_CONFIG ModelConfig = ModelConfig{
 }
 
 type LlamaServer struct {
-	ModelConfig
-	cmd  *exec.Cmd
-	port int
+	modelConfig            ModelConfig
+	cmd                    *exec.Cmd
+	port                   int
+	OpenAICompatiblePlugin compat_oai.OpenAICompatible
+}
+
+func (llamaServer *LlamaServer) GetBaseUrl() string {
+	return fmt.Sprintf("http://localhost:%d", llamaServer.port)
+}
+
+// Implement GenKit Plugin
+func (llamaServer *LlamaServer) Name() string {
+	return PROVIDER_NAME
+}
+
+// Implement GenKit Plugin
+func (llamaServer *LlamaServer) Init(ctx context.Context) []api.Action {
+	actions := llamaServer.OpenAICompatiblePlugin.Init(ctx)
+
+	// seems to be the blessed way to register models
+	// See Init() for OpenAI plugin
+	// github.com/firebase/genkit/go@v1.4.0/plugins/compat_oai/openai/openai.go
+	actions = append(actions, llamaServer.OpenAICompatiblePlugin.DefineModel(PROVIDER_NAME, MODEL_NAME, ai.ModelOptions{
+		Label:    llamaServer.modelConfig.Name,
+		Supports: &compat_oai.BasicText,
+		Versions: []string{MODEL_NAME},
+	}).(api.Action))
+
+	return actions
 }
 
 func (llamaServer *LlamaServer) Dispose() {
@@ -93,7 +132,7 @@ func (llamaServer *LlamaServer) Dispose() {
 
 func (llamaServer *LlamaServer) HealthCheck() error {
 	res, err := http.Get(
-		fmt.Sprintf("http://localhost:%d/health", llamaServer.port),
+		fmt.Sprintf("%s/health", llamaServer.GetBaseUrl()),
 	)
 
 	if res != nil && res.StatusCode == http.StatusOK {
@@ -190,31 +229,50 @@ func CreateLLamaServer(modelConfig ModelConfig) (*LlamaServer, error) {
 		args...,
 	)
 
-	if env.DEBUG {
-		// share stdout, stderr
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
+	// if env.DEBUG {
+	// 	// share stdout, stderr
+	// 	cmd.Stdout = os.Stdout
+	// 	cmd.Stderr = os.Stderr
+	// }
 
+	startTimestamp := time.Now()
 	err = cmd.Start()
 	if err != nil {
 		return nil, err
 	}
 
 	llamaServer := &LlamaServer{
-		ModelConfig: modelConfig,
+		modelConfig: modelConfig,
 		cmd:         cmd,
 		port:        port,
+		OpenAICompatiblePlugin: compat_oai.OpenAICompatible{
+			Provider: PROVIDER_NAME,
+			BaseURL:  fmt.Sprintf("http://localhost:%d", port),
+		},
 	}
 
 	var healthcheckError error
-	for attempt := range 20 {
+	for _ = range 20 {
 		time.Sleep(time.Millisecond * 50)
-		fmt.Printf("check if llama-server is ready, attempt %d\n", attempt)
 
 		healthcheckError = llamaServer.HealthCheck()
 		if healthcheckError == nil {
+			if env.DEBUG {
+				fmt.Printf("Llama server started in %s\n", time.Since(startTimestamp))
+			}
 			return llamaServer, nil
+		}
+	}
+
+	// if debug mode and failed, log all output
+	if env.DEBUG {
+		out, err := cmd.Output()
+		fmt.Println(string(out))
+
+		if exitErr, isExitError := err.(*exec.ExitError); isExitError {
+			fmt.Printf("Llama server exited with error: %s\n", exitErr.Stderr)
+		} else {
+			fmt.Printf("Llama server exited with error: %s\n", err)
 		}
 	}
 

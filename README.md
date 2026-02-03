@@ -2,6 +2,26 @@
 
 A CLI tool that translates natural language into terminal commands.
 
+## Quick Start
+
+**Minimum System Requirements**: MacOS w/ any M Chip, 16GB RAM (need 2GB free)
+
+Install using [`go`](https://go.dev/dl/)
+
+```bash
+go install github.com/azvaliev/cmd
+```
+
+Generate your commands
+
+```bash
+# interactive mode
+cmd
+
+# OR one-shot
+cmd "find all files over 100MB"
+```
+
 ## The Problem
 
 You need to find files over 100MB. You ask Claude Code.
@@ -38,6 +58,10 @@ The presence or absence of relevant retrieved context determines whether the sys
 When you teach the tool a new command, it gets added to the index. The system improves with use.
 
 ---
+
+## Development
+
+This project uses Go v1.25 and [Genkit](https://genkit.dev/docs/get-started/?lang=go#install-genkit-packages), I'd reccomend installing the genkit CLI.
 
 ## Interface
 

@@ -2,8 +2,6 @@ version: 3
 
 tasks:
   dev:
-    env:
-      DEBUG: true
     cmds:
       - go run {{.CLI_ARGS}} ./cmd/cmd/*.go
     interactive: true

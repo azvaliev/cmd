@@ -1,18 +1,29 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
 
 	"github.com/azvaliev/cmd/internal/pkg/ai"
 )
 
 func main() {
-	server, err := ai.CreateLLamaServer(ai.QWEN_25_CODER_MODEL_CONFIG)
+	server, err := ai.CreateLLamaServer(ai.IBM_GRANITE_MODEL_CONFIG)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	defer server.Dispose()
 
-	fmt.Println("Server started")
+	a := ai.NewCommandAgent(server, context.Background())
+
+	out, err := a.Generate("find all files >100 MB")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+
+	fmt.Println(out)
+
 }
