@@ -96,6 +96,7 @@ type LlamaServer struct {
 	cmd                    *exec.Cmd
 	port                   int
 	OpenAICompatiblePlugin compat_oai.OpenAICompatible
+	client                 *http.Client
 }
 
 func (llamaServer *LlamaServer) GetBaseUrl() string {
@@ -132,7 +133,7 @@ func (llamaServer *LlamaServer) Dispose() {
 }
 
 func (llamaServer *LlamaServer) HealthCheck() error {
-	res, err := http.Get(
+	res, err := llamaServer.client.Get(
 		fmt.Sprintf("%s/health", llamaServer.GetBaseUrl()),
 	)
 
@@ -168,11 +169,14 @@ func CreateLLamaServer(modelConfig ModelConfig) (*LlamaServer, error) {
 		"4096",
 		// full offload to GPU
 		"-ngl",
-		"999",
+		"99",
 		"--batch-size",
 		"2048",
 		"--ubatch-size",
 		"512",
+		// we will only run 1 request at a time
+		"--parallel",
+		"1",
 	}
 
 	args = append(args,
@@ -227,11 +231,18 @@ func CreateLLamaServer(modelConfig ModelConfig) (*LlamaServer, error) {
 
 	var cmdOutput bytes.Buffer
 	cmd := exec.Command(
-		"llama-server",
+		"/Users/azatvaliev/dev/llama.cpp/build/bin/llama-server",
 		args...,
 	)
 	cmd.Stdout = &cmdOutput
 	cmd.Stderr = &cmdOutput
+
+	defer func() {
+		if env.DEBUG {
+			fmt.Println("output")
+			fmt.Println(cmdOutput.String())
+		}
+	}()
 
 	// if env.DEBUG {
 	// 	// share stdout, stderr
@@ -253,27 +264,25 @@ func CreateLLamaServer(modelConfig ModelConfig) (*LlamaServer, error) {
 			Provider: PROVIDER_NAME,
 			BaseURL:  fmt.Sprintf("http://localhost:%d", port),
 		},
+		client: &http.Client{
+			Timeout: 50 * time.Millisecond,
+		},
 	}
 
 	var healthcheckError error
-	for _ = range 20 {
+	for poll := range 200 {
 		time.Sleep(time.Millisecond * 50)
 
 		healthcheckError = llamaServer.HealthCheck()
 		if healthcheckError == nil {
 			if env.DEBUG {
-				fmt.Printf("Llama server started in %s\n", time.Since(startTimestamp))
+				fmt.Printf("Llama server started in %s, ready after %d polls\n", time.Since(startTimestamp), poll)
 			}
 			return llamaServer, nil
 		}
 	}
 
 	llamaServer.Dispose()
-
-	// if debug mode and failed, log all output
-	if env.DEBUG {
-		fmt.Println(cmdOutput.String())
-	}
 
 	return nil, errors.Join(errors.New("llama-server failed to start"), healthcheckError)
 }

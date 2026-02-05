@@ -10,8 +10,9 @@ import (
 )
 
 type CommandAgent struct {
-	genkit  *genkit.Genkit
-	context context.Context
+	genkit   *genkit.Genkit
+	context  context.Context
+	messages []*ai.Message
 }
 
 func NewCommandAgent(
@@ -27,17 +28,49 @@ func NewCommandAgent(
 	)
 
 	return &CommandAgent{
-		genkit:  g,
-		context: context,
+		genkit:   g,
+		context:  context,
+		messages: INITIAL_MESSAGES,
 	}
 }
 
 func (a *CommandAgent) Generate(prompt string) (string, error) {
+	a.messages = append(a.messages, &ai.Message{
+		Role: ai.RoleUser,
+		Content: []*ai.Part{
+			{
+				Text: prompt,
+			},
+		},
+	})
+
 	res, err := genkit.Generate(
 		a.context,
 		a.genkit,
-		ai.WithMessages(INITIAL_MESSAGES...),
-		ai.WithPrompt(prompt),
+		ai.WithMessages(a.messages...),
+	)
+
+	if err != nil {
+		return "", err
+	}
+
+	a.messages = append(a.messages, res.Message)
+
+	return res.Text(), nil
+}
+
+func (a *CommandAgent) Explain(prompt string, command string) (string, error) {
+	res, err := genkit.Generate(
+		a.context,
+		a.genkit,
+		ai.WithSystem(EXPLAIN_SYSTEM_PROMPT),
+		ai.WithPrompt(
+			fmt.Sprint(
+				"The user asked for a command to do the following: ", prompt, "\n",
+				"The command generated was: ", command, "\n",
+				"Explain what this command does.",
+			),
+		),
 	)
 
 	if err != nil {
@@ -60,3 +93,11 @@ var INITIAL_MESSAGES = []*ai.Message{
 		},
 	},
 }
+
+const EXPLAIN_SYSTEM_PROMPT string = `You are a command explanation assistant, operating in a MacOS terminal.
+Based on the provided command, explain what it does.
+The user is a technical person (Software Engineer), so keep your explanation concise and to the point.
+
+IMPORTANT: your output should only include a single explanation, no command or additional text.
+Do not include any backticks or other special characters either
+`
