@@ -28,9 +28,18 @@ func NewCommandAgent(
 	)
 
 	return &CommandAgent{
-		genkit:   g,
-		context:  context,
-		messages: INITIAL_MESSAGES,
+		genkit:  g,
+		context: context,
+		messages: []*ai.Message{
+			{
+				Role: ai.RoleSystem,
+				Content: []*ai.Part{
+					{
+						Text: getCommandGenerationSystemPrompt(),
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -63,7 +72,7 @@ func (a *CommandAgent) Explain(prompt string, command string) (string, error) {
 	res, err := genkit.Generate(
 		a.context,
 		a.genkit,
-		ai.WithSystem(EXPLAIN_SYSTEM_PROMPT),
+		ai.WithSystem(getExplainSystemPrompt()),
 		ai.WithPrompt(
 			fmt.Sprint(
 				"The user asked for a command to do the following: ", prompt, "\n",
@@ -80,24 +89,22 @@ func (a *CommandAgent) Explain(prompt string, command string) (string, error) {
 	return res.Text(), nil
 }
 
-var INITIAL_MESSAGES = []*ai.Message{
-	{
-		Role: ai.RoleSystem,
-		Content: []*ai.Part{
-			{
-				Text: `You are a command generating assistant. The user will give you a query you will generate a command to execute.` +
-					`Your output should either by ONLY a command, or if you cannot produce the command then respond with "IDK"` +
-					"IMPORTANT: when outputting a command, DO NOT include any additional text or formatting like quotes or backticks" +
-					`The user is in a ` + getShell() + ` shell`,
-			},
-		},
-	},
+func getCommandGenerationSystemPrompt() string {
+	return `You are a command generating assistant. The user will give you a query you will generate a command to execute.
+Your output should either by ONLY a command, or if you cannot produce the command then respond with "IDK"
+
+If the command requires a specific directory and the user has not provided one, use the current directory (".").
+
+IMPORTANT: when outputting a command, DO NOT include any additional text or formatting like quotes or backticks` +
+		fmt.Sprint(`The user is in a`, getShell(), `shell`)
 }
 
-const EXPLAIN_SYSTEM_PROMPT string = `You are a command explanation assistant, operating in a MacOS terminal.
+func getExplainSystemPrompt() string {
+	return `You are a command explanation assistant, operating in a MacOS terminal.
 Based on the provided command, explain what it does.
 The user is a technical person (Software Engineer), so keep your explanation concise and to the point.
 
 IMPORTANT: your output should only include a single explanation, no command or additional text.
-Do not include any backticks or other special characters either
-`
+Do not include any backticks or other special characters either` +
+		fmt.Sprint(`The user is in a`, getShell(), `shell`)
+}
