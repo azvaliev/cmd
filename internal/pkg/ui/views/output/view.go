@@ -50,6 +50,7 @@ const (
 type outputLine struct {
 	text     string
 	isStderr bool
+	fromCR   bool // true = written by \r, can be replaced by the next CR chunk
 }
 
 type OutputModel struct {
@@ -60,14 +61,15 @@ type OutputModel struct {
 	proc     *exec.Cmd
 	exitCode int
 
-	stdoutScanner *bufio.Scanner
-	stderrScanner *bufio.Scanner
-	stdoutDone    bool
-	stderrDone    bool
+	stdoutReader *bufio.Reader
+	stderrReader *bufio.Reader
+	stdoutDone   bool
+	stderrDone   bool
 
-	lines       []outputLine
-	autoScroll  bool
-	emptyPhrase string
+	lines         []outputLine
+	autoScroll    bool
+	viewportDirty bool
+	emptyPhrase   string
 
 	viewport viewport.Model
 	ready    bool
@@ -106,17 +108,17 @@ func NewOutputModel(prompt, command string) (OutputModel, error) {
 	s.Spinner = components.DotBounceSpinner
 
 	return OutputModel{
-		prompt:        prompt,
-		command:       command,
-		state:         stateRunning,
-		proc:          proc,
-		stdoutScanner: bufio.NewScanner(stdoutPipe),
-		stderrScanner: bufio.NewScanner(stderrPipe),
-		autoScroll:    true,
-		emptyPhrase:   emptyOutputPhrases[rand.Intn(len(emptyOutputPhrases))],
-		spinner:       s,
-		help:          components.NewHelp(),
-		keys:          newOutputKeyMap(),
+		prompt:       prompt,
+		command:      command,
+		state:        stateRunning,
+		proc:         proc,
+		stdoutReader: bufio.NewReader(stdoutPipe),
+		stderrReader: bufio.NewReader(stderrPipe),
+		autoScroll:   true,
+		emptyPhrase:  emptyOutputPhrases[rand.Intn(len(emptyOutputPhrases))],
+		spinner:      s,
+		help:         components.NewHelp(),
+		keys:         newOutputKeyMap(),
 	}, nil
 }
 
@@ -139,8 +141,8 @@ func (m *OutputModel) Dispose() {
 func (m OutputModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
-		readNextLine(m.stdoutScanner, false),
-		readNextLine(m.stderrScanner, true),
+		readNextChunk(m.stdoutReader, false),
+		readNextChunk(m.stderrReader, true),
 	)
 }
 
@@ -159,31 +161,40 @@ func (m OutputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncViewportContent()
 		return m, nil
 
-	case outputLineMsg:
-		m.lines = append(m.lines, outputLine{text: msg.text, isStderr: msg.isStderr})
-		m.syncViewportContent()
-		if msg.isStderr {
-			return m, readNextLine(m.stderrScanner, true)
+	case outputBatchMsg:
+		for _, line := range msg.lines {
+			m.appendOrReplaceLine(line.text, msg.isStderr, line.carriageReturn)
 		}
-		return m, readNextLine(m.stdoutScanner, false)
+		if len(msg.lines) > 0 {
+			m.syncViewportContent()
+		}
 
-	case streamDoneMsg:
+		if msg.done {
+			if msg.isStderr {
+				m.stderrDone = true
+			} else {
+				m.stdoutDone = true
+			}
+			// Wait for both pipes to be fully drained before calling proc.Wait().
+			// If we call Wait() while a pipe still has unread data, it can deadlock
+			// because the child process blocks writing to a full pipe buffer.
+			if m.stdoutDone && m.stderrDone {
+				return m, waitForExit(m.proc)
+			}
+			return m, nil
+		}
+
 		if msg.isStderr {
-			m.stderrDone = true
-		} else {
-			m.stdoutDone = true
+			return m, readNextChunk(m.stderrReader, true)
 		}
-		// Wait for both pipes to be fully drained before calling proc.Wait().
-		// If we call Wait() while a pipe still has unread data, it can deadlock
-		// because the child process blocks writing to a full pipe buffer.
-		if m.stdoutDone && m.stderrDone {
-			return m, waitForExit(m.proc)
-		}
-		return m, nil
+		return m, readNextChunk(m.stdoutReader, false)
 
 	case commandDoneMsg:
 		m.state = stateDone
 		m.exitCode = msg.exitCode
+		// Clear dirty flag before the final sync so a stale spinner tick
+		// doesn't trigger a redundant rebuild after we've already rendered.
+		m.viewportDirty = false
 		m.resizeViewport()
 		m.syncViewportContent()
 		return m, nil
@@ -215,6 +226,13 @@ func (m OutputModel) updateRunning(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	m.spinner, cmd = m.spinner.Update(msg)
 	cmds = append(cmds, cmd)
+
+	// Flush dirty viewport on spinner ticks to debounce rapid output.
+	// The spinner fires at ~120ms intervals, capping viewport rebuilds at ~8/sec.
+	if m.viewportDirty {
+		m.syncViewportContent()
+		m.viewportDirty = false
+	}
 
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
@@ -329,6 +347,26 @@ func (m *OutputModel) resizeViewport() {
 	}
 }
 
+// appendOrReplaceLine handles CR semantics: \r-terminated chunks replace the
+// previous \r chunk from the same stream (stdout/stderr) in-place.
+func (m *OutputModel) appendOrReplaceLine(text string, isStderr, carriageReturn bool) {
+	line := outputLine{text: text, isStderr: isStderr, fromCR: carriageReturn}
+
+	if len(m.lines) > 0 {
+		last := &m.lines[len(m.lines)-1]
+		// Only match lines from the same stream — stdout and stderr are read
+		// concurrently, so they interleave. Without this check, a stdout line
+		// arriving between stderr progress updates would break the CR chain.
+		if last.fromCR && last.isStderr == isStderr {
+			last.text = text
+			last.fromCR = carriageReturn
+			return
+		}
+	}
+
+	m.lines = append(m.lines, line)
+}
+
 func (m *OutputModel) syncViewportContent() {
 	if !m.ready {
 		return
@@ -359,10 +397,12 @@ func (m *OutputModel) syncViewportContent() {
 		if i > 0 {
 			sb.WriteByte('\n')
 		}
+		// Wrap before styling so ANSI codes from stderrStyle don't interfere with width math.
+		text := hardWrap(line.text, m.viewport.Width)
 		if line.isStderr {
-			sb.WriteString(stderrStyle.Render(line.text))
+			sb.WriteString(stderrStyle.Render(text))
 		} else {
-			sb.WriteString(line.text)
+			sb.WriteString(text)
 		}
 	}
 
@@ -387,4 +427,23 @@ func (m OutputModel) nonViewportHeight() int {
 
 func viewStyleHPadding() int {
 	return components.ViewStyle.GetHorizontalPadding()
+}
+
+// hardWrap breaks text at exact character boundaries rather than word boundaries.
+// Command output (tables, HTML, progress bars) rarely has convenient whitespace,
+// so word-wrapping would leave long "words" overflowing the viewport.
+// Wrapping is applied at render time so the raw lines stay intact for clipboard copy.
+func hardWrap(text string, width int) string {
+	if width <= 0 || len(text) <= width {
+		return text
+	}
+	var sb strings.Builder
+	runes := []rune(text)
+	for i, r := range runes {
+		if i > 0 && i%width == 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
 }

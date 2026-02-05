@@ -10,13 +10,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-type outputLineMsg struct {
-	text     string
-	isStderr bool
+type lineData struct {
+	text           string
+	carriageReturn bool
 }
 
-type streamDoneMsg struct {
+type outputBatchMsg struct {
+	lines    []lineData
 	isStderr bool
+	done     bool // EOF reached — this is the final batch from this stream
 }
 
 type commandDoneMsg struct {
@@ -25,16 +27,57 @@ type commandDoneMsg struct {
 
 type clipboardCopiedMsg struct{}
 
-// readNextLine reads a single line then returns a message, letting the Bubble Tea
-// runtime re-enter Update before reading the next line. This avoids blocking the
-// event loop and lets the viewport render incrementally as output arrives.
-func readNextLine(scanner *bufio.Scanner, isStderr bool) tea.Cmd {
+const maxBatchLines = 5
+
+// readNextChunk reads lines in a batch, returning as many as are immediately
+// available in the bufio.Reader's internal buffer (up to maxBatchLines).
+// The cap ensures large output renders progressively instead of in one frame.
+func readNextChunk(reader *bufio.Reader, isStderr bool) tea.Cmd {
 	return func() tea.Msg {
-		if scanner.Scan() {
-			text := processLine(scanner.Text())
-			return outputLineMsg{text: text, isStderr: isStderr}
+		var batch []lineData
+		for {
+			text, cr, eof := readOneLine(reader)
+			if eof {
+				if text != "" {
+					batch = append(batch, lineData{text: text, carriageReturn: cr})
+				}
+				return outputBatchMsg{lines: batch, isStderr: isStderr, done: true}
+			}
+			batch = append(batch, lineData{text: text, carriageReturn: cr})
+			if reader.Buffered() == 0 || len(batch) >= maxBatchLines {
+				break
+			}
 		}
-		return streamDoneMsg{isStderr: isStderr}
+		return outputBatchMsg{lines: batch, isStderr: isStderr}
+	}
+}
+
+// readOneLine reads byte-by-byte until \r or \n, handling CR semantics.
+// Byte-by-byte reading is necessary to detect \r boundaries immediately —
+// buffered line reading would block until \n, freezing progress bars.
+func readOneLine(reader *bufio.Reader) (text string, carriageReturn bool, eof bool) {
+	var buf []byte
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return processBackspaces(string(buf)), false, true
+		}
+
+		switch b {
+		case '\n':
+			return processBackspaces(string(buf)), false, false
+		case '\r':
+			if next, peekErr := reader.Peek(1); peekErr == nil && next[0] == '\n' {
+				reader.ReadByte()
+				return processBackspaces(string(buf)), false, false
+			}
+			if len(buf) == 0 {
+				continue
+			}
+			return processBackspaces(string(buf)), true, false
+		default:
+			buf = append(buf, b)
+		}
 	}
 }
 
@@ -69,18 +112,10 @@ func killProcess(proc *exec.Cmd) {
 	}
 }
 
-// processLine emulates terminal carriage-return and backspace behavior.
-// Commands that use \r for progress bars (curl, wget) or \b for spinners
-// would otherwise show raw control characters in the viewport since we're
-// reading from a pipe, not a pty.
-func processLine(text string) string {
-	if idx := strings.LastIndex(text, "\r"); idx >= 0 {
-		text = text[idx+1:]
-	}
-	return processBackspaces(text)
-}
-
 func processBackspaces(text string) string {
+	if !strings.ContainsRune(text, '\b') {
+		return text
+	}
 	runes := []rune(text)
 	var out []rune
 	for _, r := range runes {
