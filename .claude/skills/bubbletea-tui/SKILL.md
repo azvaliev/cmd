@@ -1,5 +1,5 @@
 ---
-name: charm-tui
+name: bubbletea-tui
 description: Use when writing, reviewing, or modifying TUI code using the Charm ecosystem (Bubble Tea, Bubbles, Lip Gloss). Triggers on tasks involving terminal UI components, TUI styling, interactive terminal apps, or Bubble Tea models/updates/views.
 user-invocable: true
 argument-hint: [task-description]
