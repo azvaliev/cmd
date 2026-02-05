@@ -8,11 +8,19 @@ import (
 )
 
 func main() {
-	model := NewModel()
-	program := tea.NewProgram(model)
+	m := NewModel()
+	program := tea.NewProgram(m, tea.WithAltScreen())
 
-	if _, err := program.Run(); err != nil {
+	finalModel, err := program.Run()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+
+	fm := finalModel.(model)
+	fm.Dispose()
+
+	if fm.acceptedCommand != "" {
+		fmt.Println(fm.acceptedCommand)
 	}
 }
