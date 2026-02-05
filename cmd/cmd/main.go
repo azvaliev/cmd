@@ -1,29 +1,18 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
-	"github.com/azvaliev/cmd/internal/pkg/ai"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
-	server, err := ai.CreateLLamaServer(ai.IBM_GRANITE_MODEL_CONFIG)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer server.Dispose()
+	model := NewModel()
+	program := tea.NewProgram(model)
 
-	a := ai.NewCommandAgent(server, context.Background())
-
-	out, err := a.Generate("find all files >100 MB")
-	if err != nil {
+	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return
+		os.Exit(1)
 	}
-
-	fmt.Println(out)
-
 }
