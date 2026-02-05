@@ -1,6 +1,7 @@
 package components
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var ViewStyle = lipgloss.NewStyle().PaddingTop(1).PaddingLeft(2)
+var ViewStyle = lipgloss.NewStyle().Padding(1, 2)
 
 var (
 	promptStyle = lipgloss.NewStyle().Faint(true)
@@ -37,8 +38,29 @@ func RenderCopiedFeedback() string {
 	return copiedStyle.Render("Copied to clipboard!")
 }
 
+// ANSI colors 9 (bright red) and 10 (bright green) work consistently
+// across terminal themes with 256-color support.
+var FaintStyle = lipgloss.NewStyle().Faint(true)
+
+var statusBoxStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("240")).
+	Padding(0, 1)
+
+func RenderExitCode(exitCode int) string {
+	text := fmt.Sprintf("Exited with code %d", exitCode)
+	if exitCode != 0 {
+		return statusBoxStyle.Foreground(lipgloss.Color("9")).Render(text)
+	}
+	return statusBoxStyle.Render(text)
+}
+
+func RenderStatusBox(text string) string {
+	return statusBoxStyle.Render(text)
+}
+
 func RenderSpinnerWithLabel(spinnerView, label string) string {
-	return spinnerView + " " + label
+	return label + " " + spinnerView
 }
 
 func WrapText(text string, maxWidth int) string {

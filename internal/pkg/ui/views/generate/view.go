@@ -261,7 +261,7 @@ func (m GenerateModel) viewInput() string {
 }
 
 func (m GenerateModel) viewGenerating() string {
-	return components.RenderSpinnerWithLabel(m.spinner.View(), "Generating...")
+	return components.RenderSpinnerWithLabel(m.spinner.View(), "Generating")
 }
 
 func (m GenerateModel) viewConfirm() string {
@@ -289,7 +289,7 @@ func (m GenerateModel) viewExplaining() string {
 
 	sections = append(sections, components.RenderPrompt(m.prompt))
 	sections = append(sections, components.RenderCommand(m.command))
-	sections = append(sections, components.RenderSpinnerWithLabel(m.spinner.View(), "Explaining..."))
+	sections = append(sections, components.RenderSpinnerWithLabel(m.spinner.View(), "Explaining"))
 
 	return strings.Join(sections, "\n\n")
 }
