@@ -17,8 +17,11 @@ task dev <args>
 # Format code
 task fmt
 
-# Build/install
-go install github.com/azvaliev/cmd
+# Build release binary (stripped, optimized)
+task build
+
+# Build debug binary (with debug symbols, no optimizations)
+task build:debug
 
 # Enable debug output (prints llama-server stderr)
 DEBUG=1 task dev

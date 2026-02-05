@@ -5,4 +5,12 @@ tasks:
     cmds:
       - go run {{.CLI_ARGS}} ./cmd/cmd/*.go
     interactive: true
+  build:
+    desc: Build release binary to dist/release/cmd
+    cmds:
+      - go build -ldflags="-s -w" -o dist/release/cmd ./cmd/cmd/
+  build:debug:
+    desc: Build debug binary to dist/debug/cmd
+    cmds:
+      - go build -gcflags="all=-N -l" -o dist/debug/cmd ./cmd/cmd/
   fmt: go fmt ./...

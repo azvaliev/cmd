@@ -61,7 +61,17 @@ When you teach the tool a new command, it gets added to the index. The system im
 
 ## Development
 
-This project uses Go v1.25 and [Genkit](https://genkit.dev/docs/get-started/?lang=go#install-genkit-packages), I'd reccomend installing the genkit CLI.
+This project uses Go v1.25, [Task](https://taskfile.dev/) as a task runner, and [Genkit](https://genkit.dev/docs/get-started/?lang=go#install-genkit-packages). I'd recommend installing the genkit CLI.
+
+### Build
+
+```bash
+# Release build (stripped, optimized) → dist/release/cmd
+task build
+
+# Debug build (debug symbols, no optimizations) → dist/debug/cmd
+task build:debug
+```
 
 ## Interface
 
