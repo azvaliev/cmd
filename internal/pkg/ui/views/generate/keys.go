@@ -1,4 +1,4 @@
-package main
+package views
 
 import (
 	"github.com/charmbracelet/bubbles/help"
@@ -12,7 +12,7 @@ type keyMap struct {
 	Cancel  key.Binding
 }
 
-var _ help.KeyMap = keyMap{}
+var _ help.KeyMap = (*keyMap)(nil)
 
 func newKeyMap() keyMap {
 	return keyMap{
